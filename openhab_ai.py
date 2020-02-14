@@ -67,10 +67,22 @@ TIME_PERIOD_MINUTES = int(getConfig(config,"MachineLearning", "TIME_PERIOD_MINUT
 OPENHAB_URL = getConfig(config,"openHAB", "OPENHAB_URL", "http://openhab:7070")
 MODELS_FOLDER = getConfig(config,"MachineLearning", "MODELS_FOLDER", "./").replace('"','')
 
+PREDICTIONS_FILE_FOLDER = getConfig(config,"MachineLearning", "PREDICTIONS_FILE_FOLDER", "").replace('"','')
+PREDICTIONS_FILE_NAME = os.path.join(PREDICTIONS_FILE_FOLDER, "{}_predictions.csv".format("-".join(OUTPUT_ITEMS))) if PREDICTIONS_FILE_FOLDER else None
+
 DF_TIMESTAMP_COL_DOW = "dayOfWeek"
 DF_TIMESTAMP_COL_MINS = "minsFromMidnight"
 
 OPENHAB_URL = OPENHAB_URL[:len(OPENHAB_URL)-1] if OPENHAB_URL[-1] =="/" else OPENHAB_URL #Strip right '/' if any
+
+
+def write_df_to_file(df):
+    if not PREDICTIONS_FILE_NAME:
+        return
+
+    with open(PREDICTIONS_FILE_NAME, "a") as f:
+        df.to_csv(f, header=f.tell()==0, mode="a")
+
 
 
 def get_historical_data_for_item(item_name):
@@ -227,8 +239,7 @@ def sse_event_callback(event):
 def get_openhab_states_for(items_list):
     states = {}
     for item_name in items_list:
-        state = get_openhab_state_for_item(item_name)
-        states[item_name] = state
+        states[item_name] = get_openhab_state_for_item(item_name)
     return states
 
 
@@ -281,6 +292,15 @@ def do_predict(item_name=None, state=None, log_prefix=""):
 
             log.info("{}Input items states : {}'".format(log_prefix, curr_input_states))
             log.info("{}Output items states:'{}'".format(log_prefix, predicted_states))
+
+            # Create DataFrame for the whole row of inputs/outputs,
+            # - for pd concat, we need indexes to be aligned. y_pred does not have an index col. Add the timestamp
+            #   used in the df
+            df_full_row = pd.concat([df, pd.DataFrame(y_pred, columns=OUTPUT_ITEMS, index=[df.index[0]])], axis=1)
+            # df_full_row.dropna(inplace=True)
+            write_df_to_file(df_full_row)
+
+
         except Exception as ex:
             log.error(ex)
             log.error("DataFrame: {}".format(df))
@@ -330,7 +350,7 @@ def get_df_for_inputs_current_states(override_item_name=None, override_item_stat
             DF_TIMESTAMP_COL_MINS   : mins_midnight, 
         }
         new_data.update(input_item_states)  # merge the dicts               
-        df = pd.DataFrame(new_data, index=[0]) # index=["_time"]) #
+        df = pd.DataFrame(new_data, index=[pd.Timestamp.now()]) #index=[0]) # index=["_time"]) #
         # df.set_index("_time")
 
         return df
