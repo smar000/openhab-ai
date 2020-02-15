@@ -1,22 +1,33 @@
+
 [MachineLearning]
-# List of items to be used as input (comma separated)
-INPUT_ITEMS = Hallway_MotionSensor
+# List of items to be used as input/output respectively (comma separated)
+input_items               = Hallway_MotionSensor
+output_items              = Light_GF_Hallway
 
-#List of items to be used as output (comma separated)
-OUTPUT_ITEMS = Light_GF_Hallway
+# Period (in minutes) that event occurance times from training database are grouped into
+time_period_minutes       = 10
 
-# Period (in minutes) that event times from openHAB are groups into
-TIME_PERIOD_MINUTES = 10
-MODELS_FOLDER = ./models
-PREDICTIONS_FILE_FOLDER = ./data
+# Where to save generated models
+models_folder             = ./models
+
+# Location to save predicted data (in csv). Leave blank to not save
+predictions_file_folder   = ./data
+
+# Time in 24 hour clock format to rebuild the model. Leave blank or 0000 to disable auto rebuild
+rebuild_model_time        = 0001
+
+
 
 [openHAB]
-OPENHAB_URL=http://openhab:7070
+openhab_url               = http://openhab:7070
+
+# Automatically post predictions directly to openHAB (via it's REST API). Set to False or leave blank to disable
+openhab_send_predictions  = False
 
 
 [Database]
-DB_QUERY_URL = http://influxdbserver:8086/api/v2/query
-DB_QUERY_HEADERS = {"accept":"application/csv", "content-type":"application/vnd.flux"}
-DB_QUERY_BASE = from(bucket: "openhab/two_years") |> range(start: -30d) |> filter(fn: (r) => r._measurement == "<<>>")
-
-
+# Only influxDB currently supported
+influxdb_server_name      = influxserver
+influxdb_server_port      = 8086
+influxdb_server_db        = openhab
+influxdb_server_retention = two_years
