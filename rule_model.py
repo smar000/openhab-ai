@@ -19,6 +19,7 @@ log = logger.log
 DF_TIMESTAMP_COL_DOW     = "dayOfWeek"        # TODO! Look at one hot encoding instead...
 DF_TIMESTAMP_COL_MINS    = "minsFromMidnight" # TODO! Look at one hot encoding instead...
 
+# PREDICTIONS_FILE_NAME    = os.path.join(PREDICTIONS_FILE_FOLDER, "{}_predictions.csv".format("-".join(OUTPUT_ITEMS))) if PREDICTIONS_FILE_FOLDER else None
 
 
 class Colour:
@@ -90,7 +91,7 @@ class Models(dict):
 
     def do_predict_all_models(self):
         for k,m in self.items():
-            if m.classifer:
+            if m.classifier:
                 m.do_predict()
 
 
@@ -108,7 +109,7 @@ class Model:
         if model_dict:                        
             self.inputs = model_dict["inputs"] if "inputs" in model_dict else None
             self.outputs = model_dict["outputs"] if "outputs" in model_dict else None
-            self._classifier_type = model_dict["classifier"] if "classifer" in model_dict else classifier_type
+            self._classifier_type = model_dict["classifier"] if "classifier" in model_dict else classifier_type
         else:            
             self.inputs = inputs
             self.outputs = outputs
@@ -118,28 +119,34 @@ class Model:
         self.ai_model_retrain_ts = None
         self.last_df = None
 
-        self.model_save_path = None
-        self._filename = None
-        self.isloaded = False
-               
+        self.model_save_path = "./"
+        self.data_save_path = "./"
+        self.ai_model_filename = None
+        self.training_data_filename = None
+        self.predictions_save_filename = None
+
+        self.save_training_data = False
+        self.save_trained_model = False
+        self.save_predicions = False
+
         self.db_query_url = None
         self.db_query_headers = None
         self.db_query_base = None
         
-        self.save_training_data = False
         self.series_timeslot_mins = None
 
-        self.predictions_save_filename = None
 
         self.openhab_url = None
         self.openhab_sse = None
 
+        self.show_all_input_changes = False
+
 
     # @property
     # def filename(self):
-    #     if not self._filename:
-    #         self.get_model_filename_for_path()
-    #     return self._filename
+    #     if not self.ai_model_filename:
+    #         self.get_ai_model_filename()
+    #     return self.ai_model_filename
 
     @property
     def classifier_type(self):
@@ -149,18 +156,17 @@ class Model:
     def classifier_type(self, classifier_type):
         self._classifier_type = classifier_type
         if self.inputs:
-            self.get_model_filename_for_path()
+            self.get_ai_model_filename()
 
 
-    def get_model_filename_for_path(self, path=None):    
+    def get_ai_model_filename(self, path=None):    
         if path:
             self.model_save_path = path
 
         if not self.model_save_path:
             self.model_save_path = "./"
-
-        self._filename = os.path.join(self.model_save_path, "{}_{}.joblib".format(self.classifier, "-".join(self.outputs)))
-        return self._filename
+        self.ai_model_filename = os.path.join(self.model_save_path, "{}_{}.joblib".format(self.classifier_type, "-".join(self.outputs)))
+        return self.ai_model_filename
 
 
     def get_openhab_sse_topics(self):
@@ -236,7 +242,7 @@ class Model:
             try:
                 log.debug("[{:12.12}] Last DF:\n{}".format(self.name, self.last_df))
                 # printdf(self.last_df)
-                y_pred=self.classifer.predict(df)
+                y_pred=self.classifier.predict(df)
                 log.debug("[{:12.12}] y_pred (type={}, shape: {}): {}".format(self.name, type(y_pred), y_pred.shape, y_pred))
                 # Get current input and output items states for comparison
                 curr_input_states = self.get_openhab_states_for(self.inputs)
@@ -272,10 +278,19 @@ class Model:
                                 current_value = value.iloc[0]                    # the numpy.int64 value in location 0 of the Series
                                 # print("item_name: '{}', value: '{}', value type: '{}', current_value: '{}', last_value type: {}".format(
                                 #     item_name, value, type(value), current_value, type(last_value)))                            
-                                in_out = "{}OUT{}".format(Colour.GREEN, Colour.END) if item_name in self.outputs else "IN "
+                                in_out = "OUT" if item_name in self.outputs else "IN "
                                 suffix = " [Predicted]" if item_name in [self.outputs] else ""
                                 if current_value != last_value:
-                                    log.info("[{:12.12}] {:<3}: {:<30} {} -> {}{}".format(self.name,in_out, item_name, last_value, current_value, suffix))
+                                    if in_out == "OUT":
+                                        colour_start = Colour.GREEN 
+                                        colour_end = Colour.END
+                                    else:
+                                        colour_start = ""
+                                        colour_end = ""
+
+                                if self.show_all_input_changes or in_out == "OUT": 
+                                    log.info("[{:12.12}] {}{:<3}: {:<30} {} -> {}{}{}".format(
+                                        self.name, colour_start, in_out, item_name, last_value, current_value, suffix, colour_end))
                             # else:
                             #     log.error("[{:12.12}] Column '{}' not found in the self.last_df:\n{}".format(self.name, item_name, self.last_df))                
                     # else:
@@ -290,7 +305,7 @@ class Model:
 
                     # log.info("[{:12.12}] Delta_DF: {}".format(self.name, full_df_row))
                 self.last_df = full_df_row
-                self.write_df_to_file(full_df_row)          
+                self.save_predictions_to_file(full_df_row)          
 
             except Exception as ex:
                 log.error(ex)
@@ -376,27 +391,24 @@ class Model:
 
     def load_ai_model_from_file(self, filename = None):
         if filename:
-            self._filename = filename
+            self.ai_model_filename = filename
         
-        if not self._filename:
-            self.get_model_filename_for_path()
+        if not self.ai_model_filename:
+            self.get_ai_model_filename()
 
-        log.info("[{:12.12}] Loading existing model '{}'".format(self.name, self._filename))
-
-        self.classifer = load(self._filename)
-
-        # Assume last modified time for the model is the model generation time
-        last_modified_ts = os.path.getmtime(self._filename)        
-
-        self.ai_model_retrain_ts = datetime.datetime.fromtimestamp(last_modified_ts) 
-
-        log.info("[{:12.12}] Model loaded from file (last trained {:%H:%M %Y-%m-%d})".format(self.name, last_model_rebuild))        
+        if os.path.exists(self.get_ai_model_filename()):
+            log.info("[{:12.12}] Loading existing model '{}'".format(self.name, self.ai_model_filename))
+            self.classifier = load(self.ai_model_filename)
+            last_modified_ts = os.path.getmtime(self.ai_model_filename)        # Assume last modified time for the model is the model generation time
+            self.ai_model_retrain_ts = datetime.datetime.fromtimestamp(last_modified_ts) 
+            log.info("[{:12.12}] Model loaded from file (last trained {:%H:%M %Y-%m-%d})".format(self.name, self.ai_model_retrain_ts))        
+        else:
+            log.info("[{:12.12}] Failed to load model. File '{}' not found".format(self.name, self.ai_model_filename))        
 
 
-
-    def write_df_to_file(self, df):
+    def save_predictions_to_file(self, df):        
         if not self.predictions_save_filename:
-            return False
+            self.predictions_save_filename = os.path.join(self.data_save_path, "{}_{}_predict.csv".format("-".join(self.outputs), self.classifier_type))
 
         with open(self.predictions_save_filename, "a") as f:
             df.to_csv(f, header=f.tell()==0, mode="a")
@@ -407,7 +419,7 @@ class Model:
             self.classifier_type = classifier_type
 
         if not self.classifier_type:
-            raise Exception("No classifer type specified")
+            raise Exception("No classifier type specified")
 
         if self.classifier_type == "RF":
             self.classifier = self.generate_model_randomforest()
@@ -419,12 +431,15 @@ class Model:
             return None
 
         if not self.classifier:
-            log.error("[{:12.12}] Model training failed. Exiting...".format(self.name))
-            sys.exit(0)
+            log.error("[{:12.12}] Model training failed".format(self.name))            
+            return None
 
-        # dump(self.classifier, self.filmename)
-        log.info("[{:12.12}] Model trained and saved to file '{}'".format(self.name, self._filename))
-
+        if self.save_trained_model:
+            self.get_ai_model_filename()
+            dump(self.classifier, self.get_ai_model_filename())
+            log.info("[{:12.12}] Model trained and saved to file '{}'".format(self.name, self.ai_model_filename))
+        else:
+            log.info("[{:12.12}] Model training completed".format(self.name))
         self.ai_model_retrain_ts = datetime.datetime.now()
 
 
@@ -519,9 +534,11 @@ class Model:
             log.info("[{:12.12}] DataFrame columns: {}".format(self.name, ", ".join(df.columns.values)))
             log.debug(df)
 
-            # if self.save_training_data:
-            #     df_file_name = os.path.join(MODELS_FOLDER, "{}_data.csv".format("-".join(self.outputs)))
-            #     df.to_csv(self.filename)
+            if self.save_training_data:
+                if not self.training_data_filename:
+                    self.training_data_filename = os.path.join(self.data_save_path, "{}_data.csv".format("-".join(self.outputs)))                    
+                df.to_csv(self.training_data_filename)
+
             return df
 
         except Exception as ex:
@@ -574,14 +591,14 @@ class Model:
             X, y, X_train, X_test, y_train, y_test = self.get_training_and_test_dataframes()
 
             # Create/train model
-            self.classifer = RandomForestClassifier(n_estimators=n_estimators)    #Create a Gaussian Classifier
+            self.classifier = RandomForestClassifier(n_estimators=n_estimators)    #Create a Gaussian Classifier
             log.debug("[{:12.12}] X_train: {}".format(self.name, X_train))
             log.debug("[{:12.12}] y_train: {}".format(self.name, y_train))
             
             y_train_values = y_train.values.ravel() if len(self.outputs)==1 else y_train
 
-            self.classifer.fit(X_train,y_train_values)                 #Train the model using the training sets
-            y_pred=self.classifer.predict(X_test)                      # Predict against the test data
+            self.classifier.fit(X_train,y_train_values)                 #Train the model using the training sets
+            y_pred=self.classifier.predict(X_test)                      # Predict against the test data
 
             from sklearn import metrics #Import scikit-learn metrics module for accuracy calculation
             scores_test = metrics.accuracy_score(y_test, y_pred) * 100
@@ -589,7 +606,7 @@ class Model:
             log.info("[{:12.12}] --- {}Test data accuracy: {:.2f}%{}".format(self.name,Colour.BOLD, scores_test, Colour.END))
             # log.info("[{:12.12}] Model generated. Accuracy with training data: {}{:.1f}%{}".format(self.name, Colour.BOLD, metrics.accuracy_score(y_test, y_pred) * 100), Colour.END)
 
-            return self.classifer 
+            return self.classifier 
 
         except Exception as ex:
             log.error(ex)
@@ -609,25 +626,25 @@ class Model:
             log.debug("[{:12.12}] Training input column count: {}, Training set shape = {}".format(self.name, input_width, X_train.shape))
             
             # create 3 layer model. Assume number of neurons in 1st layer is double the input size, 2nd layer is 3/4 of 1st etc
-            self.classifer = Sequential()
-            self.classifer.add(Dense(input_width * 8, input_dim=input_width, activation='relu'))
-            self.classifer.add(Dense(input_width * 4, activation='relu'))
-            self.classifer.add(Dense(input_width * 2, activation='relu'))
-            self.classifer.add(Dense(1, activation='sigmoid')) 
+            self.classifier = Sequential()
+            self.classifier.add(Dense(input_width * 8, input_dim=input_width, activation='relu'))
+            self.classifier.add(Dense(input_width * 4, activation='relu'))
+            self.classifier.add(Dense(input_width * 2, activation='relu'))
+            self.classifier.add(Dense(1, activation='sigmoid')) 
             
-            self.classifer.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])       # Compile model
+            self.classifier.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])       # Compile model
             
-            self.classifer.fit(X, y, epochs=150, batch_size=16, verbose=0)                                   # Fit the model
+            self.classifier.fit(X, y, epochs=150, batch_size=16, verbose=0)                                   # Fit the model
             
             # evaluate the model
-            scores_training = self.classifer.evaluate(X_train, y_train, verbose=0)
+            scores_training = self.classifier.evaluate(X_train, y_train, verbose=0)
             log.info("Model generated:") 
-            log.info(" --- Training data {}: {:.2f}%".format(self.classifer.metrics_names[1], scores_training[1]*100))
-            scores_test = self.classifer.evaluate(X_test, y_test, verbose=0)
+            log.info(" --- Training data {}: {:.2f}%".format(self.classifier.metrics_names[1], scores_training[1]*100))
+            scores_test = self.classifier.evaluate(X_test, y_test, verbose=0)
             log.info(" --- {}Test data {}: {:.2f}%{}".format(
-                Colour.BOLD, self.classifer.metrics_names[1], scores_test[1]*100, Colour.END))
+                Colour.BOLD, self.classifier.metrics_names[1], scores_test[1]*100, Colour.END))
 
-            return self.classifer
+            return self.classifier
 
 
         except Exception as ex:

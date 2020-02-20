@@ -1,33 +1,60 @@
 
 [MachineLearning]
-# List of items to be used as input/output respectively (comma separated)
-input_items               = Hallway_MotionSensor
-output_items              = Light_GF_Hallway
+# Dict of models representing each openHAB "AI rule"
+	models 					  = {	
+								"Hallway Lights" : 
+									{"inputs": ["Hallway_MotionSensor_Enabled", "Hallway_MotionSensor_AllDay", "Hallway_MotionSensor"], 
+									"outputs": ["Light_GF_Hallway"]},
+								"Lounge Lights" :
+									{"inputs": ["Lounge_MotionSensor_Enabled", "Lounge_MotionSensor_AllDay" , "Lounge_MotionSensor"], 
+									"outputs": ["Light_GF_Lounge_MSProxy"]}, 
+								"Kitchen Lights" :
+									{"inputs": ["Kitchen_MotionSensor_Enabled", "Kitchen_MotionSensor_AllDay", "Kitchen_MotionSensor"], 
+									"outputs": ["Light_GF_KitchenCabinets"]}
+							}
 
-# Period (in minutes) that event occurance times from training database are grouped into
-time_period_minutes       = 10
+	# Days back to retrieve training data. Zero or blank for all available
+	days_back 				  = 0
 
-# Where to save generated models
-models_folder             = ./models
+	# Period (in minutes) that event occurance times from training database are grouped into
+	time_period_minutes       = 10
 
-# Location to save predicted data (in csv). Leave blank to not save
-predictions_file_folder   = ./data
+	# Where to save generated models
+	models_folder             = ./models
 
-# Time in 24 hour clock format to rebuild the model. Leave blank or 0000 to disable auto rebuild
-rebuild_model_time        = 0001
+	# Location to save predicted data (in csv). Leave blank to not save
+	data_folder               = ./data
+
+	# Save trained model and reuse on any future restarts
+	save_trained_model		  = True
+
+	# Save csv of the traning data
+	save_training_data 		  = True
+
+
+	# Append predictions to csv
+	save_predictions 		  = True
+
+
+	# Time in 24 hour clock format to rebuild the model. Leave blank or 0000 to disable auto rebuild
+	rebuild_model_time        = 0000
+
+	# Which model to use - either RF for random forest, or MLP for multi layer perceptron neural network
+	default_classifier		  = RF
 
 
 
 [openHAB]
-openhab_url               = http://openhab:7070
+	openhab_url               = http://openhab:7070
 
-# Automatically post predictions directly to openHAB (via it's REST API). Set to False or leave blank to disable
-openhab_send_predictions  = False
+
+	# Automatically post predictions directly to openHAB (via it's REST API). Set to False or leave blank to disable
+	openhab_send_predictions  = False
 
 
 [Database]
-# Only influxDB currently supported
-influxdb_server_name      = influxserver
-influxdb_server_port      = 8086
-influxdb_server_db        = openhab
-influxdb_server_retention = two_years
+	# Only influxDB currently supported
+	influxdb_server_name      = influxserver
+	influxdb_server_port      = 8086
+	influxdb_server_db        = openhab
+	influxdb_server_retention = two_years

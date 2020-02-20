@@ -52,23 +52,23 @@ DB_RETENTION             = getConfig(config,"Database", "influxdb_server_retenti
 
 MODELS                   = json.loads(getConfig(config,"MachineLearning", "models", None))
 
-INPUT_ITEMS              = getConfig(config,"MachineLearning", "input_items", None).replace(" ","").split(",")
-OUTPUT_ITEMS             = getConfig(config,"MachineLearning", "output_items", None).replace(" ","").split(",")
+MODELS_FOLDER            = getConfig(config,"MachineLearning", "models_folder", "./").replace('"','')
+DATA_FOLDER              = getConfig(config,"MachineLearning", "data_folder", "").replace('"','')
+
+SAVE_TRAINED_MODELS      = bool(getConfig(config,"MachineLearning", "save_trained_model", "False"))
+SAVE_TRAINING_DATA       = bool(getConfig(config,"MachineLearning", "save_training_data", "False"))
+SAVE_PREDICTIONS         = bool(getConfig(config,"MachineLearning", "save_predictions", "False"))
+
 TIME_PERIOD_MINUTES      = int(getConfig(config,"MachineLearning", "time_period_minutes", 10))
 DAYS_BACK                = abs(int(getConfig(config,"MachineLearning", "days_back", 0)))
-SAVE_TRAINING_DATA       = bool(getConfig(config,"MachineLearning", "save_training_data", "False"))
 
-
-CLASSIFIER_TYPE          = getConfig(config,"MachineLearning", "classifier", "RF")
+DEFAULT_CLASSIFIER_TYPE  = getConfig(config,"MachineLearning", "default_classifier", "RF")
 OPENHAB_URL              = strip_right_slash(getConfig(config,"openHAB", "openhab_url", "http://openhab:7070"))
 
 RETRAIN_MODEL_TIME       = getConfig(config,"openHAB", "RETRAIN_MODEL_TIME", "0000")
 OPENHAB_COMMAND_ITEM     = getConfig(config,"openHAB", "openhab_command_item", None)
 OPENHAB_SEND_PREDICTIONS = bool(getConfig(config,"openHAB", "openhab_send_predictions", "False"))
 
-MODELS_FOLDER            = getConfig(config,"MachineLearning", "models_folder", "./").replace('"','')
-PREDICTIONS_FILE_FOLDER  = getConfig(config,"MachineLearning", "predictions_file_folder", "").replace('"','')
-PREDICTIONS_FILE_NAME    = os.path.join(PREDICTIONS_FILE_FOLDER, "{}_predictions.csv".format("-".join(OUTPUT_ITEMS))) if PREDICTIONS_FILE_FOLDER else None
 
 DB_QUERY_URL             = "http://{}{}/api/v2/query".format(DB_SERVER, ":{}".format(DB_PORT) if DB_PORT else "")
 DB_QUERY_HEADERS         = {"accept" : "application/csv", "content-type" : "application/vnd.flux"}
@@ -110,8 +110,8 @@ log.info("{} openHAB AI rule models defined:".format(len(MODELS)))
 for k in MODELS:
     log.info(" --- {}: {} -> {}".format(k, MODELS[k]["inputs"], MODELS[k]["outputs"]))
 
-if not (DB_QUERY_URL and DB_QUERY_BASE and INPUT_ITEMS and OUTPUT_ITEMS):
-    log.info("Database and/or input/output items configuration missing in file '{}'".format(CONFIG_FILE))
+if not (DB_QUERY_URL and DB_QUERY_BASE and MODELS):
+    log.info("Database and/or 'rule model' configuration missing in file '{}'".format(CONFIG_FILE))
     sys.exit(0)
 
 try:
@@ -120,12 +120,22 @@ try:
 
     for k, m in models.items():
         m.model_save_path = MODELS_FOLDER
+        m.data_save_path = DATA_FOLDER
+        m.save_training_data = SAVE_TRAINING_DATA
+        m.save_trained_model = SAVE_TRAINED_MODELS
+        m.save_predictions = SAVE_PREDICTIONS
         m.db_query_base = DB_QUERY_BASE
         m.db_query_url = DB_QUERY_URL
         m.db_query_headers = DB_QUERY_HEADERS
         m.series_timeslot_mins = TIME_PERIOD_MINUTES
         m.openhab_url = OPENHAB_URL
-        m.retrain_ai_model(CLASSIFIER_TYPE)        
+        if not m.classifier_type:
+            m.classifier_type = DEFAULT_CLASSIFIER_TYPE
+
+        if not COMMANDLINE_ARGS.retrain and os.path.exists(m.get_ai_model_filename()):
+            m.load_ai_model_from_file()
+        else:            
+            m.retrain_ai_model()        
 
         if not m.classifier:
             raise Exception("Model {} has no classifier".format(m.name))
