@@ -60,12 +60,12 @@ SAVE_TRAINING_DATA       = bool(getConfig(config,"MachineLearning", "save_traini
 SAVE_PREDICTIONS         = bool(getConfig(config,"MachineLearning", "save_predictions", "False"))
 
 TIME_PERIOD_MINUTES      = int(getConfig(config,"MachineLearning", "time_period_minutes", 10))
-DAYS_BACK                = abs(int(getConfig(config,"MachineLearning", "days_back", 0)))
+DAYS_BACK                = abs(int(getConfig(config,"MachineLearning", "days_back", 365)))
 
 DEFAULT_CLASSIFIER_TYPE  = getConfig(config,"MachineLearning", "default_classifier", "RF")
 OPENHAB_URL              = strip_right_slash(getConfig(config,"openHAB", "openhab_url", "http://openhab:7070"))
 
-RETRAIN_MODEL_TIME       = getConfig(config,"openHAB", "RETRAIN_MODEL_TIME", "0000")
+RETRAIN_MODEL_TIME       = getConfig(config,"openHAB", "retrain_model_time", "0000")
 OPENHAB_COMMAND_ITEM     = getConfig(config,"openHAB", "openhab_command_item", None)
 OPENHAB_SEND_PREDICTIONS = bool(getConfig(config,"openHAB", "openhab_send_predictions", "False"))
 
@@ -79,14 +79,14 @@ DB_QUERY_BASE            = 'from(bucket: "{}/{}") {}|> filter(fn: (r) => r._meas
 
 
 def check_retrain_model():
-    ''' Rebuild model if required based on rebuild time settings '''
+    ''' Rebuild model if required based on retrain time settings '''
     if RETRAIN_MODEL_TIME and RETRAIN_MODEL_TIME != "0000" and RETRAIN_MODEL_TIME.isdigit():
         n = datetime.datetime.today()
         retrain_at_dtm = datetime.datetime(n.year, n.month, n.day, RETRAIN_MODEL_TIME[:2], RETRAIN_MODEL_TIME[2:4])
 
         for k, m in models:
             if retrain_at_dtm < m.ai_model_retrain_ts:
-                log.info("'{}' rule model retrain triggerred by 'RETRAIN_MODEL_TIME' setting of {}".format(m.name, RETRAIN_MODEL_TIME))
+                log.info("'{}' rule model retrain triggerred by 'retrain_model_time' setting of {}".format(m.name, RETRAIN_MODEL_TIME))
                 m.retrain_model()
 
 
@@ -108,7 +108,7 @@ log.debug("DB_QUERY_BASE: {}".format(DB_QUERY_BASE))
 
 log.info("{} openHAB AI rule models defined:".format(len(MODELS)))
 for k in MODELS:
-    log.info(" --- {}: {} -> {}".format(k, MODELS[k]["inputs"], MODELS[k]["outputs"]))
+    log.info(" --- {}:\n{} -> {}".format(k, MODELS[k]["inputs"], MODELS[k]["outputs"]))
 
 if not (DB_QUERY_URL and DB_QUERY_BASE and MODELS):
     log.info("Database and/or 'rule model' configuration missing in file '{}'".format(CONFIG_FILE))

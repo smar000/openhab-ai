@@ -16,10 +16,14 @@ from sklearn.model_selection import train_test_split
 log = logger.log
 
 # Internal: DataFrame column names when reducing event datetime to day of week and mins from midnight
-DF_TIMESTAMP_COL_DOW     = "dayOfWeek"        # TODO! Look at one hot encoding instead...
-DF_TIMESTAMP_COL_MINS    = "minsFromMidnight" # TODO! Look at one hot encoding instead...
+DF_TIMESTAMP_COL_MINS    = "minsFromMidnight" 
+DF_TIMESTAMP_COL_DOW     = "_DOW"        
+DF_TIMESTAMP_COL_TOD     = "_TOD"        
+DF_TIMESTAMP_COL_MONTH   = "_MONTH"        
 
-# PREDICTIONS_FILE_NAME    = os.path.join(PREDICTIONS_FILE_FOLDER, "{}_predictions.csv".format("-".join(OUTPUT_ITEMS))) if PREDICTIONS_FILE_FOLDER else None
+CALENDAR_ITEMS_LIST      = [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD, DF_TIMESTAMP_COL_MINS]
+DEFAULT_INPUT_ITEMS      = [DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD]
+
 
 
 class Colour:
@@ -37,10 +41,10 @@ class Colour:
 
 class OpenhabItem():
     def __repr__(self):
-        return "openHAB item '{}'. Current state: {}. Last predicted state: {}".format(self.name, self.state, self.predicted_state)
+        return "openHAB item '{}'. Current state: {}. Last predicted state: {}".format(self.name_trunc, self.state, self.predicted_state)
 
     def __str__(self):
-        return "openHAB item '{}'. Current state: {}. Last predicted state: {}".format(self.name, self.state, self.predicted_state)
+        return "openHAB item '{}'. Current state: {}. Last predicted state: {}".format(self.name_trunc, self.state, self.predicted_state)
 
     def __init__(self, name, state=None):
         self.name = name
@@ -78,16 +82,19 @@ class Models(dict):
                 return m
         return None
 
+
     def get_model_for_output_item(self, item_name):
         for k,m in self.items():
             if item_name in m.outputs:
                 return m
         return None
 
+
     def stop_all_sse(self):
         for k,m in self.items():
             if m.openhab_sse:
                 m.openhab_sse.stop()
+
 
     def do_predict_all_models(self):
         for k,m in self.items():
@@ -96,16 +103,22 @@ class Models(dict):
 
 
 class Model:
-    """ An object representing a single openHAB 'rule'. inputs are the openHAB items triggerring the corresponding output(s).    """    
+    """ An object representing a single openHAB 'rule'. inputs are the openHAB items triggerring the corresponding output(s).    
+        If not specified, default inputs are day of week and time of day
+    """    
 
     def __repr__(self):
-        return "Model '{}'. Inputs: {}. Outputs: {}".format(self.name, self.inputs, self.outputs)
+        return "Model '{}'. Inputs: {}. Outputs: {}".format(self.name_trunc, self.inputs, self.outputs)
+
 
     def __str__(self):
-        return "Model '{}'. Inputs: {}. Outputs: {}".format(self.name, self.inputs, self.outputs)
+        return "Model '{}'. Inputs: {}. Outputs: {}".format(self.name_trunc, self.inputs, self.outputs)
+
 
     def __init__(self, name, model_dict=None, inputs=[], outputs=[], classifier_type=None):
         self.name = name
+        self.name_trunc = (self.name[:10] + '..') if len(self.name) > 12 else self.name
+
         if model_dict:                        
             self.inputs = model_dict["inputs"] if "inputs" in model_dict else None
             self.outputs = model_dict["outputs"] if "outputs" in model_dict else None
@@ -142,12 +155,6 @@ class Model:
         self.show_all_input_changes = False
 
 
-    # @property
-    # def filename(self):
-    #     if not self.ai_model_filename:
-    #         self.get_ai_model_filename()
-    #     return self.ai_model_filename
-
     @property
     def classifier_type(self):
         return self._classifier_type
@@ -173,7 +180,8 @@ class Model:
         """ return openhab SSE topic list for the input items"""
         topics = []
         for item in self.inputs:
-            topics.append("smarthome/items/{}/state".format(item)) #statechanged
+            if item not in CALENDAR_ITEMS_LIST:
+                topics.append("smarthome/items/{}/state".format(item)) #statechanged
         return topics
 
 
@@ -181,17 +189,17 @@ class Model:
         """ Subscribe to openHAB SSE for the model's input items"""
         topics = self.get_openhab_sse_topics()
         url = "{}/rest/events?topics={}".format(self.openhab_url, ",".join(topics))
-        log.debug("[{:12.12}] openHAB SSE url: {}".format(self.name, url))
+        log.debug("[{:12.12}] openHAB SSE url: {}".format(self.name_trunc, url))
 
         self.openhab_sse = SSEReceiver(url, self.sse_event_callback)
         self.openhab_sse.start()
 
-        log.info("[{:12.12}] Subscribed to openHAB items: {}".format(self.name, ", ".join(self.inputs)))
+        log.info("[{:12.12}] Subscribed to openHAB items: {}".format(self.name_trunc, ", ".join(filter(lambda x: x not in CALENDAR_ITEMS_LIST, self.inputs))))
 
 
     def sse_event_callback(self, event):
         """ SSE Callback function """        
-        log.debug("[{:12.12}] Callback function called with event: {}".format(self.name, event))
+        log.debug("[{:12.12}] Callback function called with event: {}".format(self.name_trunc, event))
         state_event = json.loads(event["data"])
         # print(state_event)
         state_str = json.loads(state_event["payload"])["value"] if "payload" in state_event  else "-"    
@@ -236,14 +244,14 @@ class Model:
 
         now = datetime.datetime.now()
         df = self.get_df_for_current_input_states(item_name, state)
-        log.debug("[{:12.12}] DF for current state:\n{}".format(self.name, df))
+        log.debug("[{:12.12}] DF for current state:\n{}".format(self.name_trunc, df))
 
         if df is not None and not df.empty:
             try:
-                log.debug("[{:12.12}] Last DF:\n{}".format(self.name, self.last_df))
+                log.debug("[{:12.12}] Last DF:\n{}".format(self.name_trunc, self.last_df))
                 # printdf(self.last_df)
                 y_pred=self.classifier.predict(df)
-                log.debug("[{:12.12}] y_pred (type={}, shape: {}): {}".format(self.name, type(y_pred), y_pred.shape, y_pred))
+                log.debug("[{:12.12}] y_pred (type={}, shape: {}): {}".format(self.name_trunc, type(y_pred), y_pred.shape, y_pred))
                 # Get current input and output items states for comparison
                 curr_input_states = self.get_openhab_states_for(self.inputs)
                 curr_output_states = self.get_openhab_states_for(self.outputs)
@@ -256,12 +264,11 @@ class Model:
                     predicted_states[item_name] = "{} (actual) -> {} (predicted)".format(curr_output_states[item_name], predicted_state)
                     count += 1
 
-                log.debug("[{:12.12}] {}Input items states : {}'".format(self.name, log_prefix, curr_input_states))
-                log.debug("[{:12.12}] {}Output items states:'{}'".format(self.name, log_prefix, predicted_states))
-
+                log.debug("[{:12.12}] {}Input items states : {}'".format(self.name_trunc, log_prefix, curr_input_states))
+                log.debug("[{:12.12}] {}Output items states:'{}'".format(self.name_trunc, log_prefix, predicted_states))
 
                 
-                if curr_output_states: log.debug("[{:12.12}] {}Current states (from openHAB):'{}'".format(self.name, log_prefix, curr_output_states))
+                if curr_output_states: log.debug("[{:12.12}] {}Current states (from openHAB):'{}'".format(self.name_trunc, log_prefix, curr_output_states))
                 
                 # Create DataFrame for the whole row of inputs/outputs,
                 # - for pd concat, we need indexes to be aligned. y_pred does not have an index col. Add the timestamp
@@ -292,28 +299,28 @@ class Model:
                                     log.info("[{:12.12}] {}{:<3}: {:<30} {} -> {}{}{}".format(
                                         self.name, colour_start, in_out, item_name, last_value, current_value, suffix, colour_end))
                             # else:
-                            #     log.error("[{:12.12}] Column '{}' not found in the self.last_df:\n{}".format(self.name, item_name, self.last_df))                
+                            #     log.error("[{:12.12}] Column '{}' not found in the self.last_df:\n{}".format(self.name_trunc, item_name, self.last_df))                
                     # else:
                     #     log.debug("No changes detected")
                 else:
-                    log.info("[{:12.12}] Inputs/predicted output(s) states: ".format(self.name))
+                    log.info("[{:12.12}] Inputs/predicted output(s) states: ".format(self.name_trunc))
                     for i in range(full_df_row.shape[1]): # iterate over all columns
                         col_name = full_df_row.columns[i]
                         suffix = " [Predicted]" if col_name in [self.outputs] else ""
-                        log.info("[{:12.12}] --- {:<30} -> {}{}".format(self.name, col_name, full_df_row[col_name][0], suffix))
+                        log.info("[{:12.12}] --- {:<30} -> {}{}".format(self.name_trunc, col_name, full_df_row[col_name][0], suffix))
                     log.info("")
 
-                    # log.info("[{:12.12}] Delta_DF: {}".format(self.name, full_df_row))
+                    # log.info("[{:12.12}] Delta_DF: {}".format(self.name_trunc, full_df_row))
                 self.last_df = full_df_row
                 self.save_predictions_to_file(full_df_row)          
 
             except Exception as ex:
                 log.error(ex)
-                log.error("[{:12.12}] DataFrame: {}".format(self.name, df))
+                log.error("[{:12.12}] DataFrame: {}".format(self.name_trunc, df))
                 log.error(traceback.format_exc())            
 
         else:
-            log.error("[{:12.12}] Prediction failed as DataFrame of current input item states not obtained".format(self.name))
+            log.error("[{:12.12}] Prediction failed as DataFrame of current input item states not obtained".format(self.name_trunc))
 
 
     def get_df_for_current_input_states(self, override_item_name=None, override_item_state=None):
@@ -325,7 +332,7 @@ class Model:
 
         # Get updated input item states from openHAB
         for item_name in self.inputs:                    
-            if not override_item_name or item_name != override_item_name: # ignore if item is override_item_name as we should have the state for this already            
+            if item_name not in CALENDAR_ITEMS_LIST and (not override_item_name or item_name != override_item_name): # ignore if item is override_item_name as we should have the state for this already            
                 rest_url = "{}/rest/items/{}/state".format(self.openhab_url, item_name)
                 response = requests.get(rest_url)
                 # log.info("response: {}, {}".format(response, response.text))
@@ -335,58 +342,50 @@ class Model:
 
                     input_item_states[item_name] = state
                 else:
-                    log.error("[{:12.12}] Invalid response code from openHAB REST api for item '{}': {} {}".format(self.name, item_name, response.status_code, response.text))
+                    log.error("[{:12.12}] Invalid response code from openHAB REST api for item '{}': {} {}".format(self.name_trunc, item_name, response.status_code, response.text))
 
         if override_item_name:
             if type(override_item_state) == str: override_item_state = self.convert_state_to_num(override_item_state)
             input_item_states[override_item_name] = override_item_state
         
-        # Get the time of day 'slot', and then convert both ToD and DoW to cyclical equivalents
-        if input_item_states:            
+        # Get the time of day 'slot', and insert any required calendar items
+        if input_item_states or self.inputs == DEFAULT_INPUT_ITEMS:            
             now = datetime.datetime.now()
             
             # round to the next period as used in the training model
             period_mins = now.minute + (self.series_timeslot_mins - now.minute % self.series_timeslot_mins)
-            # log.info("[{:12.12}] mins: {}".format(self.name, period_mins))
+            # log.info("[{:12.12}] mins: {}".format(self.name_trunc, period_mins))
             mins_midnight = [now.hour * 60 + period_mins]
-            now = datetime.datetime(now.year, now.month, now.day, now.hour, 0) + datetime.timedelta(minutes=period_mins)
+            slot_end = datetime.datetime(now.year, now.month, now.day, now.hour, 0) + datetime.timedelta(minutes=period_mins)
 
             new_data = {
                 DF_TIMESTAMP_COL_DOW    : datetime.datetime.today().weekday(), 
                 DF_TIMESTAMP_COL_MINS   : mins_midnight, 
             }
-            df_ts = pd.DataFrame(new_data, index=[pd.Timestamp(now)])
-            dow_sin, dow_cos = self.convert_cyclic_to_sin_cos(df_ts[DF_TIMESTAMP_COL_DOW], 7)
-            tod_sin, tod_cos = self.convert_cyclic_to_sin_cos(df_ts[DF_TIMESTAMP_COL_MINS], 1440)
 
-            df = pd.DataFrame(input_item_states, index=[pd.Timestamp(now)])
-            df.insert(0, 'dow_sin', dow_sin)               
-            df.insert(1, 'dow_cos', dow_cos)
+            df_ts = pd.DataFrame(new_data, index=[pd.Timestamp(slot_end)])
+            if input_item_states:
+                df = pd.DataFrame(input_item_states, index=[pd.Timestamp(slot_end)])
+            else:
+                df = pd.DataFrame(index=[pd.Timestamp(slot_end)])
 
-            
-            df.insert(2, 'tod_sin', tod_sin)               
-            df.insert(3, 'tod_cos', tod_cos)
-
-            # df.set_index("_time")
-
-            log.debug("[{:12.12}] DF for current state:\n{}".format(self.name, df))
-            # printdf(df)
+            df = self.insert_calendar_item_inputs(df)
 
             return df
         else:
-            log.error("[{:12.12}] Failed to get current states for input items from openHAB".format(self.name))
+            log.error("[{:12.12}] Failed to get current states for input items from openHAB".format(self.name_trunc))
             return None
 
 
     def post_to_openhab(self, item_name, new_state):
         if OPENHAB_SEND_PREDICTIONS:
-            log.info("[{:12.12}] Posting '{}' to openHAB item '{}'".format(self.name, new_state, item_name))
+            log.info("[{:12.12}] Posting '{}' to openHAB item '{}'".format(self.name_trunc, new_state, item_name))
             
         # curl -X POST --header "Content-Type: text/plain" --header "Accept: application/json" -d "Test" "http://openhab:7070/rest/items/Voice_Command"
         headers = {"accept" : "application/json", "content-type" : "text/plain"}
         url = "{}/rest/items/{}".format(self.openhab_url,item_name)
         response = requests.post(url, data=new_state, headers=headers)
-        log.debug("[{:12.12}] Posted '{}' to openHAB for item '{}'. Reponse: '{}'".format(self.name, new_state, item_name, response))
+        log.debug("[{:12.12}] Posted '{}' to openHAB for item '{}'. Reponse: '{}'".format(self.name_trunc, new_state, item_name, response))
 
 
     def load_ai_model_from_file(self, filename = None):
@@ -397,13 +396,13 @@ class Model:
             self.get_ai_model_filename()
 
         if os.path.exists(self.get_ai_model_filename()):
-            log.info("[{:12.12}] Loading existing model '{}'".format(self.name, self.ai_model_filename))
+            log.info("[{:12.12}] Loading existing model '{}'".format(self.name_trunc, self.ai_model_filename))
             self.classifier = load(self.ai_model_filename)
             last_modified_ts = os.path.getmtime(self.ai_model_filename)        # Assume last modified time for the model is the model generation time
             self.ai_model_retrain_ts = datetime.datetime.fromtimestamp(last_modified_ts) 
-            log.info("[{:12.12}] Model loaded from file (last trained {:%H:%M %Y-%m-%d})".format(self.name, self.ai_model_retrain_ts))        
+            log.info("[{:12.12}] Model loaded from file (last trained {:%H:%M %Y-%m-%d})".format(self.name_trunc, self.ai_model_retrain_ts))        
         else:
-            log.info("[{:12.12}] Failed to load model. File '{}' not found".format(self.name, self.ai_model_filename))        
+            log.info("[{:12.12}] Failed to load model. File '{}' not found".format(self.name_trunc, self.ai_model_filename))        
 
 
     def save_predictions_to_file(self, df):        
@@ -413,6 +412,7 @@ class Model:
         with open(self.predictions_save_filename, "a") as f:
             df.to_csv(f, header=f.tell()==0, mode="a")
         return True
+
 
     def retrain_ai_model(self, classifier_type=None):
         if classifier_type: 
@@ -427,21 +427,20 @@ class Model:
             self.classifier = self.generate_model_mlp()
         else:
             self.classifier = None
-            log.error("[{:12.12}] Invalid classifier '{}'".format(self.name, self.classifier_type))
+            log.error("[{:12.12}] Invalid classifier '{}'".format(self.name_trunc, self.classifier_type))
             return None
 
         if not self.classifier:
-            log.error("[{:12.12}] Model training failed".format(self.name))            
+            log.error("[{:12.12}] Model training failed".format(self.name_trunc))            
             return None
 
         if self.save_trained_model:
             self.get_ai_model_filename()
             dump(self.classifier, self.get_ai_model_filename())
-            log.info("[{:12.12}] Model trained and saved to file '{}'".format(self.name, self.ai_model_filename))
+            log.info("[{:12.12}] Model trained and saved to file '{}'".format(self.name_trunc, self.ai_model_filename))
         else:
-            log.info("[{:12.12}] Model training completed".format(self.name))
+            log.info("[{:12.12}] Model training completed".format(self.name_trunc))
         self.ai_model_retrain_ts = datetime.datetime.now()
-
 
 
     def convert_cyclic_to_sin_cos(self, cyc_series, total_periods=1440, shift=0):
@@ -456,7 +455,7 @@ class Model:
             log.error("No item name given. Aborting...")
             return
 
-        log.debug("[{:12.12}] ---> Getting data for item '{}' from database...".format(self.name, item_name))    
+        log.debug("[{:12.12}] ---> Getting data for item '{}' from database...".format(self.name_trunc, item_name))    
         query = self.db_query_base.replace("<<>>",item_name)
         try:
             response = requests.post(self.db_query_url, data=query, headers=self.db_query_headers)        
@@ -467,8 +466,8 @@ class Model:
                 assert not time_series.empty, "Empty time series returned for '{}'. DB Query: {}".format(item_name, query)
                 return time_series
             else:
-                log.error("[{:12.12}] Failed to get data from server. Response: {}".format(self.name, response))
-                log.error("[{:12.12}] --- URL: '{}'\n --- Query: '{}'\n --- Headers: '{}'".format(self.name, self.db_query_url, query, self.db_query_headers))
+                log.error("[{:12.12}] Failed to get data from server. Response: {}".format(self.name_trunc, response))
+                log.error("[{:12.12}] --- URL: '{}'\n --- Query: '{}'\n --- Headers: '{}'".format(self.name_trunc, self.db_query_url, query, self.db_query_headers))
         
         except Exception as ex:
             log.error(ex)
@@ -476,18 +475,55 @@ class Model:
             return None
 
 
-    def get_dataframe_historical_data(self):    
-        time_series = []
-        log.info("[{:12.12}] Creating new model for input items '{}".format(self.name, self.inputs))
+    def insert_calendar_item_inputs(self, df):
+        col_offset = 0
+        if DF_TIMESTAMP_COL_MONTH in self.inputs:
+            df, new_col_count = self.insert_cyclic_cal_item_cols(df, df.index.month -1, 12, DF_TIMESTAMP_COL_MONTH, col_offset,)
+            col_offset += new_col_count
+
+        if (not self.inputs and DF_TIMESTAMP_COL_DOW in DEFAULT_INPUT_ITEMS) or DF_TIMESTAMP_COL_DOW in self.inputs:
+            df, new_col_count = self.insert_cyclic_cal_item_cols(df, df.index.dayofweek, 7, DF_TIMESTAMP_COL_DOW, col_offset)
+            col_offset += new_col_count
+
+        if (not self.inputs and DF_TIMESTAMP_COL_TOD in DEFAULT_INPUT_ITEMS) or DF_TIMESTAMP_COL_TOD in self.inputs:
+            df, new_col_count = self.insert_cyclic_cal_item_cols(df, df.index.hour * 60 + df.index.minute, 1440, DF_TIMESTAMP_COL_TOD, col_offset)
+
+        return df
+
+
+    def insert_cyclic_cal_item_cols(self, df, source_series, num_periods, col_name_prefix, insert_pos=0, keep_temp_col=False):
+        """ Assume index column is a timestamp, which is then used for day of week, time of day etc """
+
+         # Add columns for day of week. This is then converted into 'cyclic' format
+        df.insert(insert_pos, col_name_prefix, source_series)
+
+        # Map to cyclic format
+        col_sin, col_cos = self.convert_cyclic_to_sin_cos(df[col_name_prefix], num_periods)  
+        df.insert(insert_pos + 1, '{}_sin'.format(col_name_prefix), col_sin)               
+        df.insert(insert_pos + 2, '{}_cos'.format(col_name_prefix), col_cos)
+        
+        if not keep_temp_col:
+            df.drop(col_name_prefix, axis=1, inplace=True)
+        new_cols = 3 if keep_temp_col else 2
+
+        return df, new_cols # Returning number of new cols, in case we later use different 'cyclic' methods
+
+
+    def get_historical_data_dataframe(self):    
+        if not self.inputs:
+            self.inputs = DEFAULT_INPUT_ITEMS
+
+        log.info("[{:12.12}] Creating new model for input items '{}".format(self.name_trunc, self.inputs))
 
         try:
+            time_series = []
             for item in self.inputs:
-                time_series.append(self.get_historical_data_for_item(item))
+                if item not in [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD]:
+                    time_series.append(self.get_historical_data_for_item(item))
             
             for item in self.outputs:
                 time_series.append(self.get_historical_data_for_item(item))
-            log.info("[{:12.12}] Loaded {} time series data from database".format(self.name, len(time_series)))
-            # print(time_series)       
+            log.info("[{:12.12}] Loaded {} time series data from database".format(self.name_trunc, len(time_series)))
 
             start = max([i.index.min() for i in time_series])
             end = min([i.index.max() for i in time_series])
@@ -496,8 +532,8 @@ class Model:
             start = start + pd.Timedelta(minutes=self.series_timeslot_mins - (start.minute % self.series_timeslot_mins))
             end = end + pd.Timedelta(minutes=end.minute % self.series_timeslot_mins)     
 
-            log.info("[{:12.12}] Earliest common start: \t{}".format(self.name, start))
-            log.info("[{:12.12}] Latest common end    : \t{}".format(self.name, end))
+            log.info("[{:12.12}] Earliest common start: \t{}".format(self.name_trunc, start))
+            log.info("[{:12.12}] Latest common end    : \t{}".format(self.name_trunc, end))
 
             # Create a new column, _time, divided into the required time slots (note we also have date here)
             # and then merge in the individual series previously loaded into corresponding time slots
@@ -505,33 +541,10 @@ class Model:
             for s in time_series:
                 df = pd.merge_asof(df, s, on='_time')
             df = df.set_index("_time")
+            df = self.insert_calendar_item_inputs(df)
 
-            # Add columns for day of week and time period in minutes
-            df.insert(0, DF_TIMESTAMP_COL_DOW, df.index.dayofweek)
-            df.insert(1, DF_TIMESTAMP_COL_MINS, df.index.hour * 60 + df.index.minute)
-
-            # Deal with cyclical nature of day/time etc (e.g. try mapping to circle). TODO! Test with one-hot...    
-            dow_sin, dow_cos = self.convert_cyclic_to_sin_cos(df[DF_TIMESTAMP_COL_DOW], 7)  
-            df.insert(2, 'dow_sin', dow_sin)               
-            df.insert(3, 'dow_cos', dow_cos)
-
-            tod_sin, tod_cos = self.convert_cyclic_to_sin_cos(df[DF_TIMESTAMP_COL_MINS], 1440) # Normalised with number of 1440 mins in day
-            df.insert(4, 'tod_sin', tod_sin)               
-            df.insert(5, 'tod_cos', tod_cos)
-
-
-            # df.insert(2, 'tod_sin', np.sin(df[DF_TIMESTAMP_COL_MINS]*(2.*np.pi/1440)))               # Normalised with number of mins in day
-            # df.insert(3, 'tod_cos', np.cos(df[DF_TIMESTAMP_COL_MINS]*(2.*np.pi/1440)))
-
-            # Drop the original DoW and mins past midnight cols as no longer required
-            df.drop(DF_TIMESTAMP_COL_DOW, axis=1, inplace=True)
-            df.drop(DF_TIMESTAMP_COL_MINS, axis=1, inplace=True)
-
-            # df['mnth_sin'] = np.sin((df.mnth-1)*(2.*np.pi/12))            # Normalised
-            # df['mnth_cos'] = np.cos((df.mnth-1)*(2.*np.pi/12))
-
-            log.info("[{:12.12}] DataFrame created and merged. Shape: {}".format(self.name, df.shape))
-            log.info("[{:12.12}] DataFrame columns: {}".format(self.name, ", ".join(df.columns.values)))
+            log.info("[{:12.12}] DataFrame created and merged. Shape: {}".format(self.name_trunc, df.shape))
+            log.info("[{:12.12}] DataFrame columns: {}".format(self.name_trunc, ", ".join(df.columns.values)))
             log.debug(df)
 
             if self.save_training_data:
@@ -544,8 +557,8 @@ class Model:
         except Exception as ex:
             log.error(ex)        
             log.error(traceback.format_exc())
-            if item: log.error("[{:12.12}] Error in processing series for '{}'".format(self.name, item))
-            log.error("[{:12.12}] time_series[]:\n{}".format(self.name, time_series))
+            if item: log.error("[{:12.12}] Error in processing series for '{}'".format(self.name_trunc, item))
+            log.error("[{:12.12}] time_series[]:\n{}".format(self.name_trunc, time_series))
             return None
 
 
@@ -554,7 +567,7 @@ class Model:
 
         try:
         
-            df = self.get_dataframe_historical_data()   
+            df = self.get_historical_data_dataframe()   
             if df is None or df.empty:
                 raise Exception("DataFrame of historical data returned None or empty")
 
@@ -563,22 +576,20 @@ class Model:
             # Split data into training/test
             output_col = df.columns.get_loc(self.outputs[0])
             X = df.iloc[:, 0:output_col]
-
-            # X = df[[DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_MINS] + input_items]
             y = df[self.outputs]
 
-            log.debug("[{:12.12}] INPUT ITEMS: X ({}): {}".format(self.name, X.shape, X))
-            log.debug("[{:12.12}] OUTPUT ITEMS: y ({}): {}".format(self.name, y.shape, y))
+            log.debug("[{:12.12}] INPUT ITEMS: X ({}): {}".format(self.name_trunc, X.shape, X.columns.values))
+            log.debug("[{:12.12}] OUTPUT ITEMS: y ({}): {}".format(self.name_trunc, y.shape, y.columns.values))
             
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size) # i.e. training size = 1 - test_size
-            log.debug("[{:12.12}] Total set shape: {}. Training set row count: {}. Test set row count: {}".format(self.name, df.shape,len(X_train), len(X_test)))
+            log.debug("[{:12.12}] Total set shape: {}. Training set row count: {}. Test set row count: {}".format(self.name_trunc, df.shape,len(X_train), len(X_test)))
 
             return X, y, X_train, X_test, y_train, y_test
 
         except Exception as ex:
             log.error(ex)
-            if not X.empty: log.error("[{:12.12}] X ({}): {}".format(self.name, len(X), X))
-            if not y.empty: log.error("[{:12.12}] y ({}): {}".format(self.name, len(y), y))
+            if not X.empty: log.error("[{:12.12}] X ({}): {}".format(self.name_trunc, len(X), X))
+            if not y.empty: log.error("[{:12.12}] y ({}): {}".format(self.name_trunc, len(y), y))
             log.error(traceback.format_exc())
             return None, None, None, None
 
@@ -592,8 +603,8 @@ class Model:
 
             # Create/train model
             self.classifier = RandomForestClassifier(n_estimators=n_estimators)    #Create a Gaussian Classifier
-            log.debug("[{:12.12}] X_train: {}".format(self.name, X_train))
-            log.debug("[{:12.12}] y_train: {}".format(self.name, y_train))
+            log.debug("[{:12.12}] X_train: {}".format(self.name_trunc, X_train))
+            log.debug("[{:12.12}] y_train: {}".format(self.name_trunc, y_train))
             
             y_train_values = y_train.values.ravel() if len(self.outputs)==1 else y_train
 
@@ -602,9 +613,9 @@ class Model:
 
             from sklearn import metrics #Import scikit-learn metrics module for accuracy calculation
             scores_test = metrics.accuracy_score(y_test, y_pred) * 100
-            log.info("[{:12.12}] Model generated:".format(self.name)) 
-            log.info("[{:12.12}] --- {}Test data accuracy: {:.2f}%{}".format(self.name,Colour.BOLD, scores_test, Colour.END))
-            # log.info("[{:12.12}] Model generated. Accuracy with training data: {}{:.1f}%{}".format(self.name, Colour.BOLD, metrics.accuracy_score(y_test, y_pred) * 100), Colour.END)
+            log.info("[{:12.12}] Model generated:".format(self.name_trunc)) 
+            log.info("[{:12.12}] --- {}Test data accuracy: {:.2f}%{}".format(self.name_trunc,Colour.BOLD, scores_test, Colour.END))
+            # log.info("[{:12.12}] Model generated. Accuracy with training data: {}{:.1f}%{}".format(self.name_trunc, Colour.BOLD, metrics.accuracy_score(y_test, y_pred) * 100), Colour.END)
 
             return self.classifier 
 
@@ -623,7 +634,7 @@ class Model:
             X, y, X_train, X_test, y_train, y_test = self.get_training_and_test_dataframes()
 
             input_width = len(X_train.columns)
-            log.debug("[{:12.12}] Training input column count: {}, Training set shape = {}".format(self.name, input_width, X_train.shape))
+            log.debug("[{:12.12}] Training input column count: {}, Training set shape = {}".format(self.name_trunc, input_width, X_train.shape))
             
             # create 3 layer model. Assume number of neurons in 1st layer is double the input size, 2nd layer is 3/4 of 1st etc
             self.classifier = Sequential()
