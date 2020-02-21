@@ -129,6 +129,7 @@ try:
         m.db_query_headers = DB_QUERY_HEADERS
         m.series_timeslot_mins = TIME_PERIOD_MINUTES
         m.openhab_url = OPENHAB_URL
+        m.send_predictions_to_openhab = OPENHAB_SEND_PREDICTIONS
         if not m.classifier_type:
             m.classifier_type = DEFAULT_CLASSIFIER_TYPE
 

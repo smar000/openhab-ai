@@ -21,7 +21,7 @@ DF_TIMESTAMP_COL_DOW     = "_DOW"
 DF_TIMESTAMP_COL_TOD     = "_TOD"        
 DF_TIMESTAMP_COL_MONTH   = "_MONTH"        
 
-CALENDAR_ITEMS_LIST      = [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD, DF_TIMESTAMP_COL_MINS]
+INTERNAL_DTM_ITEMS_LIST      = [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD, DF_TIMESTAMP_COL_MINS]
 DEFAULT_INPUT_ITEMS      = [DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD]
 
 
@@ -117,7 +117,7 @@ class Model:
 
     def __init__(self, name, model_dict=None, inputs=[], outputs=[], classifier_type=None):
         self.name = name
-        self.name_trunc = (self.name[:10] + '..') if len(self.name) > 12 else self.name
+        self.name_trunc = (self.name[:10] + '..') if len(self.name) >= 12 else self.name
 
         if model_dict:                        
             self.inputs = model_dict["inputs"] if "inputs" in model_dict else None
@@ -128,6 +128,7 @@ class Model:
             self.outputs = outputs
             self._classifier_type = classifier_type
         
+        # self.inputs_exc_internal = filter(lambda x: x not in INTERNAL_DTM_ITEMS_LIST, self.inputs)
         self.classifier = None
         self.ai_model_retrain_ts = None
         self.last_df = None
@@ -137,16 +138,20 @@ class Model:
         self.ai_model_filename = None
         self.training_data_filename = None
         self.predictions_save_filename = None
+        self.send_predictions_to_openhab = False
+
+        self.show_all_predictions = False
 
         self.save_training_data = False
         self.save_trained_model = False
-        self.save_predicions = False
+        self.save_predictions = False
 
         self.db_query_url = None
         self.db_query_headers = None
         self.db_query_base = None
         
         self.series_timeslot_mins = None
+
 
 
         self.openhab_url = None
@@ -180,8 +185,9 @@ class Model:
         """ return openhab SSE topic list for the input items"""
         topics = []
         for item in self.inputs:
-            if item not in CALENDAR_ITEMS_LIST:
+            if item not in INTERNAL_DTM_ITEMS_LIST:
                 topics.append("smarthome/items/{}/state".format(item)) #statechanged
+        log.debug("[{}] SSE Topics: {}".format(self.name_trunc, topics))
         return topics
 
 
@@ -194,7 +200,7 @@ class Model:
         self.openhab_sse = SSEReceiver(url, self.sse_event_callback)
         self.openhab_sse.start()
 
-        log.info("[{:12.12}] Subscribed to openHAB items: {}".format(self.name_trunc, ", ".join(filter(lambda x: x not in CALENDAR_ITEMS_LIST, self.inputs))))
+        log.info("[{:12.12}] Subscribed to openHAB items: {}".format(self.name_trunc, ", ".join(filter(lambda x: x not in INTERNAL_DTM_ITEMS_LIST, self.inputs))))
 
 
     def sse_event_callback(self, event):
@@ -209,8 +215,8 @@ class Model:
 
 
     def get_openhab_states_for(self, items_list):
-        states = {}
-        for item_name in items_list:
+        states = {}        
+        for item_name in filter(lambda x: x not in INTERNAL_DTM_ITEMS_LIST, items_list):
             states[item_name] = self.get_openhab_state_for_item(item_name)
         return states
 
@@ -249,14 +255,12 @@ class Model:
         if df is not None and not df.empty:
             try:
                 log.debug("[{:12.12}] Last DF:\n{}".format(self.name_trunc, self.last_df))
-                # printdf(self.last_df)
                 y_pred=self.classifier.predict(df)
                 log.debug("[{:12.12}] y_pred (type={}, shape: {}): {}".format(self.name_trunc, type(y_pred), y_pred.shape, y_pred))
+                
                 # Get current input and output items states for comparison
                 curr_input_states = self.get_openhab_states_for(self.inputs)
                 curr_output_states = self.get_openhab_states_for(self.outputs)
-                # print("type(y_pred): {}, y_pred: {}".format(type(y_pred), y_pred))
-                # y_pred_string = ", ".join(y_pred.tolist()) # if type(y_pred) == np.ndarray else y_pred
                 predicted_states = {}
                 count = 0
                 for item_name in self.outputs:                
@@ -266,7 +270,6 @@ class Model:
 
                 log.debug("[{:12.12}] {}Input items states : {}'".format(self.name_trunc, log_prefix, curr_input_states))
                 log.debug("[{:12.12}] {}Output items states:'{}'".format(self.name_trunc, log_prefix, predicted_states))
-
                 
                 if curr_output_states: log.debug("[{:12.12}] {}Current states (from openHAB):'{}'".format(self.name_trunc, log_prefix, curr_output_states))
                 
@@ -274,36 +277,33 @@ class Model:
                 # - for pd concat, we need indexes to be aligned. y_pred does not have an index col. Add the timestamp
                 #   used in the df
                 full_df_row = pd.concat([df, pd.DataFrame(y_pred, columns=self.outputs, index=[df.index[0]])], axis=1)
-                
 
                 # Get any changes to previous dataframe
+                predicted_changes = {}
                 if self.last_df is not None:     
                     if not np.array_equal(self.last_df.values, full_df_row.values):
                         for (item_name, value) in full_df_row.iteritems():      # value is pandas Series
                             if item_name in self.last_df.columns:   
                                 last_value = self.last_df[item_name][0]
                                 current_value = value.iloc[0]                    # the numpy.int64 value in location 0 of the Series
-                                # print("item_name: '{}', value: '{}', value type: '{}', current_value: '{}', last_value type: {}".format(
-                                #     item_name, value, type(value), current_value, type(last_value)))                            
                                 in_out = "OUT" if item_name in self.outputs else "IN "
                                 suffix = " [Predicted]" if item_name in [self.outputs] else ""
+                                
                                 if current_value != last_value:
                                     if in_out == "OUT":
                                         colour_start = Colour.GREEN 
                                         colour_end = Colour.END
+                                        predicted_changes[item_name] = current_value
                                     else:
                                         colour_start = ""
                                         colour_end = ""
 
                                 if self.show_all_input_changes or in_out == "OUT": 
-                                    log.info("[{:12.12}] {}{:<3}: {:<30} {} -> {}{}{}".format(
-                                        self.name, colour_start, in_out, item_name, last_value, current_value, suffix, colour_end))
-                            # else:
-                            #     log.error("[{:12.12}] Column '{}' not found in the self.last_df:\n{}".format(self.name_trunc, item_name, self.last_df))                
-                    # else:
-                    #     log.debug("No changes detected")
+                                    if self.show_all_predictions or current_value != last_value:
+                                        log.info("[{:12.12}] {}{:<3}: {:<30} {} -> {}{}{}".format(
+                                            self.name_trunc, colour_start, in_out, item_name, last_value, current_value, suffix, colour_end))
                 else:
-                    log.info("[{:12.12}] Inputs/predicted output(s) states: ".format(self.name_trunc))
+                    log.info("[{:12.12}] Starting inputs/predicted output(s) states: ".format(self.name_trunc))
                     for i in range(full_df_row.shape[1]): # iterate over all columns
                         col_name = full_df_row.columns[i]
                         suffix = " [Predicted]" if col_name in [self.outputs] else ""
@@ -312,7 +312,12 @@ class Model:
 
                     # log.info("[{:12.12}] Delta_DF: {}".format(self.name_trunc, full_df_row))
                 self.last_df = full_df_row
-                self.save_predictions_to_file(full_df_row)          
+
+                if self.save_predictions:
+                    self.save_predictions_to_file(full_df_row)          
+
+                if self.send_predictions_to_openhab and predicted_changes: # Only post if an actual *change* predicted - hence dict instead of full_df_row
+                    self.post_predictions_to_openhab(predicted_changes)
 
             except Exception as ex:
                 log.error(ex)
@@ -332,7 +337,7 @@ class Model:
 
         # Get updated input item states from openHAB
         for item_name in self.inputs:                    
-            if item_name not in CALENDAR_ITEMS_LIST and (not override_item_name or item_name != override_item_name): # ignore if item is override_item_name as we should have the state for this already            
+            if item_name not in INTERNAL_DTM_ITEMS_LIST and (not override_item_name or item_name != override_item_name): # ignore if item is override_item_name as we should have the state for this already            
                 rest_url = "{}/rest/items/{}/state".format(self.openhab_url, item_name)
                 response = requests.get(rest_url)
                 # log.info("response: {}, {}".format(response, response.text))
@@ -377,15 +382,22 @@ class Model:
             return None
 
 
-    def post_to_openhab(self, item_name, new_state):
-        if OPENHAB_SEND_PREDICTIONS:
-            log.info("[{:12.12}] Posting '{}' to openHAB item '{}'".format(self.name_trunc, new_state, item_name))
+    def post_predictions_to_openhab(self, predictions):
+        # predicions is a dict 
+        if predictions:
+            for item_name in predictions:
+                    self.post_state_to_openhab(item_name, predictions[item_name])
+
+
+    def post_state_to_openhab(self, item_name, new_state):        
+        log.debug("[{:12.12}] Posting '{}' to openHAB item '{}'".format(self.name_trunc, new_state, item_name))
             
-        # curl -X POST --header "Content-Type: text/plain" --header "Accept: application/json" -d "Test" "http://openhab:7070/rest/items/Voice_Command"
+        # curl -X POST --header "Content-Type: text/plain" --header "Accept: application/json" -d "Test" "http://openhab:7070/rest/items/<item>"
         headers = {"accept" : "application/json", "content-type" : "text/plain"}
         url = "{}/rest/items/{}".format(self.openhab_url,item_name)
         response = requests.post(url, data=new_state, headers=headers)
-        log.debug("[{:12.12}] Posted '{}' to openHAB for item '{}'. Reponse: '{}'".format(self.name_trunc, new_state, item_name, response))
+        log.info("[{:12.12}] {}Posted '{}' to openHAB item '{}'. Reponse: '{}'{}".format(
+            self.name_trunc, Colour.RED, new_state, item_name, response, Colour.END))
 
 
     def load_ai_model_from_file(self, filename = None):
@@ -514,11 +526,11 @@ class Model:
             self.inputs = DEFAULT_INPUT_ITEMS
 
         log.info("[{:12.12}] Creating new model for input items '{}".format(self.name_trunc, self.inputs))
-
+        log.info("[{:12.12}] Data grouped into time intervals of {}{} mins{}".format(self.name_trunc, Colour.BOLD, self.series_timeslot_mins, Colour.END))
         try:
             time_series = []
             for item in self.inputs:
-                if item not in [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD]:
+                if item not in INTERNAL_DTM_ITEMS_LIST:
                     time_series.append(self.get_historical_data_for_item(item))
             
             for item in self.outputs:
