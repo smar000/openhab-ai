@@ -1,10 +1,10 @@
-##Machine Learning based Item State Prediction for openHAB
+## Machine Learning based Item State Prediction for openHAB
 
 A first foray into machine learning, and in particular seeing whether it is possible to get usable predictions for openHAB item states. As I have never delved into machine learning before this excercise, it is very simplistic and probably not necassarily the best way of doing such things. Curently only supporting Random Forest and MLP classifiers.
 
 
 
-###Requirements:
+### Requirements:
 
 * Data is retrieved _only_ from an InfluxDB database at the moment.
 
