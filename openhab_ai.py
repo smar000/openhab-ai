@@ -59,6 +59,8 @@ SAVE_TRAINED_MODELS      = bool(getConfig(config,"MachineLearning", "save_traine
 SAVE_TRAINING_DATA       = bool(getConfig(config,"MachineLearning", "save_training_data", "False"))
 SAVE_PREDICTIONS         = bool(getConfig(config,"MachineLearning", "save_predictions", "False"))
 
+SHOW_ALL_PREDICTIONS         = bool(getConfig(config,"MachineLearning", "show_all_predictions", "False"))
+
 TIME_PERIOD_MINUTES      = int(getConfig(config,"MachineLearning", "time_period_minutes", 10))
 DAYS_BACK                = abs(int(getConfig(config,"MachineLearning", "days_back", 365)))
 
@@ -124,6 +126,7 @@ try:
         m.save_training_data = SAVE_TRAINING_DATA
         m.save_trained_model = SAVE_TRAINED_MODELS
         m.save_predictions = SAVE_PREDICTIONS
+        m.show_all_predictions = SHOW_ALL_PREDICTIONS
         m.db_query_base = DB_QUERY_BASE
         m.db_query_url = DB_QUERY_URL
         m.db_query_headers = DB_QUERY_HEADERS

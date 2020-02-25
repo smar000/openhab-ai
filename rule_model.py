@@ -12,18 +12,22 @@ import json
 from joblib import dump, load
 from sse import SSEReceiver
 from sklearn.model_selection import train_test_split
+from keras.utils import np_utils
+
 
 log = logger.log
 
 # Internal: DataFrame column names when reducing event datetime to day of week and mins from midnight
+DF_TIMESTAMP_COL_POD     = "PeriodOfDay" 
 DF_TIMESTAMP_COL_MINS    = "minsFromMidnight" 
 DF_TIMESTAMP_COL_DOW     = "_DOW"        
 DF_TIMESTAMP_COL_TOD     = "_TOD"        
 DF_TIMESTAMP_COL_MONTH   = "_MONTH"        
 
-INTERNAL_DTM_ITEMS_LIST      = [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD, DF_TIMESTAMP_COL_MINS]
+INTERNAL_DTM_ITEMS_LIST  = [DF_TIMESTAMP_COL_MONTH, DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD, DF_TIMESTAMP_COL_MINS]
 DEFAULT_INPUT_ITEMS      = [DF_TIMESTAMP_COL_DOW, DF_TIMESTAMP_COL_TOD]
 
+PERIODS_OF_DAY           = ["EARLYMORNING", "DAY", "NIGHT", "LATENIGHT"]
 
 
 class Colour:
@@ -460,6 +464,12 @@ class Model:
         cyc_cos = np.cos((cyc_series + shift) * (2.*np.pi/total_periods))
 
         return cyc_sin, cyc_cos
+
+
+    def one_hot_encode_object_array(arr):
+        """One hot encode a numpy array of objects (e.g. strings)"""
+        uniques, ids = np.unique(arr, return_inverse=True)
+        return np_utils.to_categorical(ids, len(uniques))   
 
 
     def get_historical_data_for_item(self, item_name):
