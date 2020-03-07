@@ -55,23 +55,23 @@ MODELS                   = json.loads(getConfig(config,"MachineLearning", "model
 MODELS_FOLDER            = getConfig(config,"MachineLearning", "models_folder", "./").replace('"','')
 DATA_FOLDER              = getConfig(config,"MachineLearning", "data_folder", "").replace('"','')
 
-SAVE_TRAINED_MODELS      = bool(getConfig(config,"MachineLearning", "save_trained_model", "False"))
-SAVE_TRAINING_DATA       = bool(getConfig(config,"MachineLearning", "save_training_data", "False"))
-SAVE_PREDICTIONS         = bool(getConfig(config,"MachineLearning", "save_predictions", "False"))
+SAVE_TRAINED_MODELS      = getConfig(config,"MachineLearning", "save_trained_model", "False").lower == "true"
+SAVE_TRAINING_DATA       = getConfig(config,"MachineLearning", "save_training_data", "False").lower == "true"
+SAVE_PREDICTIONS         = getConfig(config,"MachineLearning", "save_predictions", "False").lower == "true"
 
-SHOW_ALL_PREDICTIONS         = bool(getConfig(config,"MachineLearning", "show_all_predictions", "False"))
+SHOW_ALL_PREDICTIONS     = getConfig(config,"MachineLearning", "show_all_predictions", "False").lower == "true"
 
 TIME_PERIOD_MINUTES      = int(getConfig(config,"MachineLearning", "time_period_minutes", 10))
 DAYS_BACK                = abs(int(getConfig(config,"MachineLearning", "days_back", 365)))
 
 DEFAULT_CLASSIFIER_TYPE  = getConfig(config,"MachineLearning", "default_classifier", "RF")
+RETRAIN_MODEL_TIME       = getConfig(config,"MachineLearning", "retrain_model_time", "0000")
+
 OPENHAB_URL              = strip_right_slash(getConfig(config,"openHAB", "openhab_url", "http://openhab:7070"))
-
-RETRAIN_MODEL_TIME       = getConfig(config,"openHAB", "retrain_model_time", "0000")
 OPENHAB_COMMAND_ITEM     = getConfig(config,"openHAB", "openhab_command_item", None)
-OPENHAB_SEND_PREDICTIONS = bool(getConfig(config,"openHAB", "openhab_send_predictions", "False"))
+OPENHAB_SEND_PREDICTIONS = getConfig(config,"openHAB", "openhab_send_predictions", "False").lower == "true"
 
-
+# InfluxDB url and query headers
 DB_QUERY_URL             = "http://{}{}/api/v2/query".format(DB_SERVER, ":{}".format(DB_PORT) if DB_PORT else "")
 DB_QUERY_HEADERS         = {"accept" : "application/csv", "content-type" : "application/vnd.flux"}
 
@@ -145,6 +145,8 @@ try:
             raise Exception("Model {} has no classifier".format(m.name))
 
         m.subscribe_to_openhab()
+        log.info("[{}] {}".format(m.name_trunc, "Showing all predictions as they occur" if m.show_all_predictions else "Only showing change of state predictions"))
+
 
 except Exception as ex:
     log.error(ex)

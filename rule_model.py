@@ -211,11 +211,15 @@ class Model:
         """ SSE Callback function """        
         log.debug("[{:12.12}] Callback function called with event: {}".format(self.name_trunc, event))
         state_event = json.loads(event["data"])
-        # print(state_event)
-        state_str = json.loads(state_event["payload"])["value"] if "payload" in state_event  else "-"    
+        if "payload" in state_event:
+            payload = json.loads(state_event["payload"])
+            state_str = payload["value"] if "value" in payload else None
+        else:
+            state_str = None
         item_name = state_event["topic"].replace("smarthome/items/","").replace("/statechanged","").replace("/state","") if "topic" in state_event else "-"
 
-        self.do_predict(item_name, state_str)
+        if state_str:
+            self.do_predict(item_name, state_str)
 
 
     def get_openhab_states_for(self, items_list):
@@ -292,15 +296,15 @@ class Model:
                                 current_value = value.iloc[0]                    # the numpy.int64 value in location 0 of the Series
                                 in_out = "OUT" if item_name in self.outputs else "IN "
                                 suffix = " [Predicted]" if item_name in [self.outputs] else ""
+
+                                colour_start = ""
+                                colour_end = ""
                                 
                                 if current_value != last_value:
                                     if in_out == "OUT":
                                         colour_start = Colour.GREEN 
                                         colour_end = Colour.END
                                         predicted_changes[item_name] = current_value
-                                    else:
-                                        colour_start = ""
-                                        colour_end = ""
 
                                 if self.show_all_input_changes or in_out == "OUT": 
                                     if self.show_all_predictions or current_value != last_value:
@@ -312,7 +316,7 @@ class Model:
                         col_name = full_df_row.columns[i]
                         suffix = " [Predicted]" if col_name in [self.outputs] else ""
                         log.info("[{:12.12}] --- {:<30} -> {}{}".format(self.name_trunc, col_name, full_df_row[col_name][0], suffix))
-                    log.info("")
+                    log.info("[{}] -----------------------------------------".format(self.name_trunc))
 
                     # log.info("[{:12.12}] Delta_DF: {}".format(self.name_trunc, full_df_row))
                 self.last_df = full_df_row
@@ -320,7 +324,8 @@ class Model:
                 if self.save_predictions:
                     self.save_predictions_to_file(full_df_row)          
 
-                if self.send_predictions_to_openhab and predicted_changes: # Only post if an actual *change* predicted - hence dict instead of full_df_row
+                if self.send_predictions_to_openhab and predicted_changes: # Only post if an actual *change* predicted - hence predicted_changes dict instead of full_df_row
+                    log.info("[{}] POSTING to openHAB........... {}".format(self.send_predictions_to_openhab, predicted_changes))
                     self.post_predictions_to_openhab(predicted_changes)
 
             except Exception as ex:
@@ -393,16 +398,19 @@ class Model:
                     self.post_state_to_openhab(item_name, predictions[item_name])
 
 
-    def post_state_to_openhab(self, item_name, new_state):        
+    def post_state_to_openhab(self, item_name, new_state):                
         log.debug("[{:12.12}] Posting '{}' to openHAB item '{}'".format(self.name_trunc, new_state, item_name))
-            
-        # curl -X POST --header "Content-Type: text/plain" --header "Accept: application/json" -d "Test" "http://openhab:7070/rest/items/<item>"
-        headers = {"accept" : "application/json", "content-type" : "text/plain"}
-        url = "{}/rest/items/{}".format(self.openhab_url,item_name)
-        response = requests.post(url, data=new_state, headers=headers)
-        log.info("[{:12.12}] {}Posted '{}' to openHAB item '{}'. Reponse: '{}'{}".format(
-            self.name_trunc, Colour.RED, new_state, item_name, response, Colour.END))
-
+        
+        if item_name and new_state:
+            return
+            # curl -X POST --header "Content-Type: text/plain" --header "Accept: application/json" -d "Test" "http://openhab:7070/rest/items/<item>"
+            headers = {"accept" : "application/json", "content-type" : "text/plain"}
+            url = "{}/rest/items/{}".format(self.openhab_url,item_name)
+            response = requests.post(url, data=new_state, headers=headers)
+            log.info("[{:12.12}] {}Posted '{}' to openHAB item '{}'. Reponse: '{}'{}".format(
+                self.name_trunc, Colour.RED, new_state, item_name, response, Colour.END))
+        else:
+            log.error("Cannot post to openHAB as invalid item name ('{}') or state ('{}')".format(item_name, new_state))
 
     def load_ai_model_from_file(self, filename = None):
         if filename:
@@ -632,7 +640,7 @@ class Model:
 
             self.classifier.fit(X_train,y_train_values)                 #Train the model using the training sets
             y_pred=self.classifier.predict(X_test)                      # Predict against the test data
-
+            
             from sklearn import metrics #Import scikit-learn metrics module for accuracy calculation
             scores_test = metrics.accuracy_score(y_test, y_pred) * 100
             log.info("[{:12.12}] Model generated:".format(self.name_trunc)) 
