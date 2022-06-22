@@ -2,7 +2,7 @@ requests==2.22.0
 sseclient_py==1.7
 joblib==0.14.1
 Keras==2.3.1
-numpy==1.18.1
+numpy==1.22.0
 pandas==1.0.1
 scikit_learn==0.22.1
 sseclient==0.0.24
